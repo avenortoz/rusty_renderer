@@ -1,8 +1,3 @@
-use nom::{
-    combinator::{map, map_opt, map_res},
-    number::complete::{le_u16, le_u8},
-    IResult,
-};
 use crate::tga::parse_error::ParseError;
 
 #[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug)]
@@ -13,7 +8,7 @@ pub enum Bpp {
     Bits32,
 }
 
-impl Bpp{
+impl Bpp {
     pub fn bits(&self) -> u8 {
         match self {
             Self::Bits8 => 8,
@@ -27,14 +22,13 @@ impl Bpp{
     }
 }
 
-
-fn parse_bpp(value: u8) -> Result<Bpp, ParseError>{
+fn parse_bpp(value: u8) -> Result<Bpp, ParseError> {
     match value {
         0x8 => Ok(Bpp::Bits8),
         0x10 => Ok(Bpp::Bits16),
         0x18 => Ok(Bpp::Bits24),
         0x20 => Ok(Bpp::Bits32),
-        _ => Err(ParseError::MismatchedBpp(value))
+        _ => Err(ParseError::MismatchedBpp(value)),
     }
 }
 
@@ -61,7 +55,7 @@ fn parse_image_type(image_type: u8) -> Result<(ImageFormatType, ImageDataType), 
         9 => Ok((ImageFormatType::RLE, ImageDataType::ColorMapped)),
         10 => Ok((ImageFormatType::RLE, ImageDataType::TrueColor)),
         11 => Ok((ImageFormatType::RLE, ImageDataType::BlackAndWhite)),
-        _ => Err(ParseError::ColorMap)
+        _ => Err(ParseError::ColorMap),
     }
 }
 
@@ -70,12 +64,12 @@ pub enum ImageOrigin {
     BottomLeft,
     BottomRight,
     TopLeft,
-    TopRight
+    TopRight,
 }
 
 fn parse_image_origin(value: u8) -> ImageOrigin {
     // Take 5 and 4 bit
-    match (value & 0x30 ) >> 4 {
+    match (value & 0x30) >> 4 {
         0 => ImageOrigin::BottomLeft,
         1 => ImageOrigin::BottomRight,
         2 => ImageOrigin::TopLeft,
@@ -97,21 +91,62 @@ pub struct TgaHeader {
     pub width: u16,
     pub height: u16,
     pub bpp: Bpp,
-    pub image_origin: u8,
+    pub image_origin: ImageOrigin,
     pub alpha_channel: u8,
 }
 
-fn has_color_map(value: u8) -> Result<bool, ParseError>{
+fn has_color_map(value: u8) -> Result<bool, ParseError> {
     match value {
         0 => Ok(false),
         1 => Ok(true),
-        _ => Err(ParseError::Header)
+        _ => Err(ParseError::Header),
     }
 }
 
-impl TgaHeader{
-    pub(crate) fn parse(input: &[u8]) -> Result<TgaHeader, ParseError>{
-        let id_length: u8 = input[0];
-        todo!()
+impl TgaHeader {
+    pub(crate) fn parse(input: &[u8]) -> Result<TgaHeader, ParseError> {
+        let mut offset = 0;
+        let id_length: u8 = input[offset];
+        offset += 1;
+        let id_color_map: bool = has_color_map(input[offset])?;
+        offset += 1;
+        let (image_format_type, image_data_type) = parse_image_type(input[offset])?;
+        offset += 1;
+        let color_map_start = u16::from_le_bytes(input[offset..=offset + 1].try_into().unwrap());
+        offset += 2;
+        let color_map_len = u16::from_le_bytes(input[offset..=offset + 1].try_into().unwrap());
+        offset += 2;
+        let color_map_depth: Bpp = parse_bpp(input[offset])?;
+        offset += 1;
+        let x_origin = u16::from_le_bytes(input[offset..=offset + 1].try_into().unwrap());
+        offset += 2;
+        let y_origin = u16::from_le_bytes(input[offset..=offset + 1].try_into().unwrap());
+        offset += 2;
+        let width = u16::from_le_bytes(input[offset..=offset + 1].try_into().unwrap());
+        offset += 2;
+        let height = u16::from_le_bytes(input[offset..=offset + 1].try_into().unwrap());
+        offset += 2;
+        let bpp = parse_bpp(input[offset])?;
+        offset += 1;
+        let _descriptor = input[offset];
+        let image_origin: ImageOrigin = parse_image_origin(_descriptor);
+        let alpha_channel: u8 = _descriptor & 0xF;
+        offset += 1;
+        Ok(TgaHeader {
+            id_length,
+            color_map_type: id_color_map,
+            image_format_type,
+            image_data_type,
+            color_map_start,
+            color_map_len,
+            color_map_depth,
+            x_origin,
+            y_origin,
+            width,
+            height,
+            bpp,
+            image_origin,
+            alpha_channel,
+        })
     }
 }
