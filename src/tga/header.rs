@@ -1,4 +1,5 @@
 use crate::tga::parse_error::ParseError;
+use std::io::{Write};
 
 #[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug)]
 pub enum Bpp {
@@ -31,6 +32,14 @@ fn parse_bpp(value: u8) -> Result<Bpp, ParseError> {
         _ => Err(ParseError::MismatchedBpp(value)),
     }
 }
+fn from_bpp(bpp: Bpp) -> u8 {
+    match bpp {
+        Bpp::Bits8 => 0x8,
+        Bpp::Bits16 => 0x10,
+        Bpp::Bits24 => 0x18,
+        Bpp::Bits32 => 0x20,
+    }
+}
 
 #[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug)]
 pub enum ImageFormatType {
@@ -58,6 +67,18 @@ fn parse_image_type(image_type: u8) -> Result<(ImageFormatType, ImageDataType), 
         _ => Err(ParseError::ColorMap),
     }
 }
+fn from_image_type(image_format_type: ImageFormatType, image_data_type: ImageDataType) -> u8 {
+    match (image_format_type, image_data_type) {
+        (ImageFormatType::Uncompressed, ImageDataType::NoData) => 0,
+        (ImageFormatType::Uncompressed, ImageDataType::ColorMapped) => 1,
+        (ImageFormatType::Uncompressed, ImageDataType::TrueColor) => 2,
+        (ImageFormatType::Uncompressed, ImageDataType::BlackAndWhite) => 3,
+        (ImageFormatType::RLE, ImageDataType::ColorMapped) => 9,
+        (ImageFormatType::RLE, ImageDataType::TrueColor) => 10,
+        (ImageFormatType::RLE, ImageDataType::BlackAndWhite) => 11,
+        _ => 0
+    }
+}
 
 #[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug)]
 pub enum ImageOrigin {
@@ -77,6 +98,19 @@ fn parse_image_origin(value: u8) -> ImageOrigin {
     }
 }
 
+fn from_image_descriptor(image_origin: ImageOrigin, alpha_channel: bool ) -> u8 {
+    let mut image_descriptor : u8 = match image_origin {
+        ImageOrigin::BottomLeft => 0b0000_0000,
+        ImageOrigin::BottomRight =>  1 << 4,
+        ImageOrigin::TopLeft => 2 << 4,
+        ImageOrigin::TopRight => 3 << 4
+    };
+    if alpha_channel {
+        image_descriptor = image_descriptor | 1 << 7;
+    }
+    image_descriptor
+}
+
 #[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug)]
 pub struct TgaHeader {
     pub id_length: u8,
@@ -92,7 +126,41 @@ pub struct TgaHeader {
     pub height: u16,
     pub bpp: Bpp,
     pub image_origin: ImageOrigin,
-    pub alpha_channel: u8,
+    pub alpha_channel: bool,
+}
+
+impl TgaHeader {
+    pub fn new(width: u16, height: u16) -> TgaHeader {
+        TgaHeader {
+            id_length: 0,
+            color_map_type: false,
+            image_format_type: ImageFormatType::Uncompressed,
+            image_data_type: ImageDataType::TrueColor,
+            color_map_start: 0,
+            color_map_len: 0,
+            color_map_depth: Bpp::Bits24,
+            x_origin: 0,
+            y_origin: 0,
+            width: 0,
+            height: 0,
+            bpp: Bpp::Bits24,
+            image_origin: ImageOrigin::TopLeft,
+            alpha_channel: false,
+        }
+    } 
+    pub fn write(&self, writer: &mut impl Write) -> std::io::Result<()> {
+        writer.write(&[self.id_length])?;
+        writer.write(&[self.color_map_type as u8])?;
+        writer.write(&[from_image_type(self.image_format_type, self.image_data_type)])?;
+        writer.write(&[from_bpp(self.bpp)])?;
+        writer.write(self.x_origin.to_le_bytes().as_ref())?;
+        writer.write(self.y_origin.to_le_bytes().as_ref())?;
+        writer.write(self.width.to_le_bytes().as_ref())?;
+        writer.write(self.height.to_le_bytes().as_ref())?;
+        writer.write(&[from_bpp(self.bpp)])?;
+        writer.write(&[from_image_descriptor(self.image_origin, self.alpha_channel)])?;
+        Ok(())
+    }
 }
 
 fn has_color_map(value: u8) -> Result<bool, ParseError> {
@@ -100,53 +168,5 @@ fn has_color_map(value: u8) -> Result<bool, ParseError> {
         0 => Ok(false),
         1 => Ok(true),
         _ => Err(ParseError::Header),
-    }
-}
-
-impl TgaHeader {
-    pub(crate) fn parse(input: &[u8]) -> Result<TgaHeader, ParseError> {
-        let mut offset = 0;
-        let id_length: u8 = input[offset];
-        offset += 1;
-        let id_color_map: bool = has_color_map(input[offset])?;
-        offset += 1;
-        let (image_format_type, image_data_type) = parse_image_type(input[offset])?;
-        offset += 1;
-        let color_map_start = u16::from_le_bytes(input[offset..=offset + 1].try_into().unwrap());
-        offset += 2;
-        let color_map_len = u16::from_le_bytes(input[offset..=offset + 1].try_into().unwrap());
-        offset += 2;
-        let color_map_depth: Bpp = parse_bpp(input[offset])?;
-        offset += 1;
-        let x_origin = u16::from_le_bytes(input[offset..=offset + 1].try_into().unwrap());
-        offset += 2;
-        let y_origin = u16::from_le_bytes(input[offset..=offset + 1].try_into().unwrap());
-        offset += 2;
-        let width = u16::from_le_bytes(input[offset..=offset + 1].try_into().unwrap());
-        offset += 2;
-        let height = u16::from_le_bytes(input[offset..=offset + 1].try_into().unwrap());
-        offset += 2;
-        let bpp = parse_bpp(input[offset])?;
-        offset += 1;
-        let _descriptor = input[offset];
-        let image_origin: ImageOrigin = parse_image_origin(_descriptor);
-        let alpha_channel: u8 = _descriptor & 0xF;
-        offset += 1;
-        Ok(TgaHeader {
-            id_length,
-            color_map_type: id_color_map,
-            image_format_type,
-            image_data_type,
-            color_map_start,
-            color_map_len,
-            color_map_depth,
-            x_origin,
-            y_origin,
-            width,
-            height,
-            bpp,
-            image_origin,
-            alpha_channel,
-        })
     }
 }
