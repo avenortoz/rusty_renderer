@@ -1,8 +1,8 @@
 mod parse_error;
 mod header;
-mod tga_image;
+mod image;
 pub use crate::{
     tga::parse_error::ParseError,
     tga::header::*,
-    tga::tga_image::*,
+    tga::image::*,
 };
