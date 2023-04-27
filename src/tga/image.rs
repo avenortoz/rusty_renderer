@@ -114,7 +114,7 @@ where
         })
     }
 
-    pub fn set(&mut self, x: u16, y: u16, pixel: P) {
+    pub fn set(&mut self, x: u16, y: u16, pixel: &P) {
         let offset = ((y as usize * self.header.width as usize) + x as usize) * P::bytes() as usize;
         let (_, suffix) = self.data.split_at_mut(offset.into());
         let index : usize = P::bytes() as usize;
